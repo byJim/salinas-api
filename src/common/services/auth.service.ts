@@ -5,7 +5,8 @@ import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { env } from "@/config";
 import { dateUtils } from "../utils/date";
-import { Role } from "@/generated/prisma/client";
+import { Role, User, Prisma } from "@/generated/prisma/client";
+import { HttpException } from "@/common/exceptions/http-exception";
 
 class AuthService {
     private jwtPrivateKey: string = Buffer.from(
@@ -77,6 +78,49 @@ class AuthService {
         return await bcrypt.hash(password, 10);
     };
 
+    register = async ({
+      createUserInput,
+    }: {
+      createUserInput: Prisma.UserCreateInput;
+    }): Promise<{ user: User; accessToken: string; refreshToken: string }> => {
+      const { email, password } = createUserInput;
+  
+      if (!password) {
+        throw HttpException.badRequest({
+          message: "Password is required.",
+        });
+      }
+  
+      const existingUser = await prisma.user.findUnique({
+        where: { email },
+      });
+  
+      if (existingUser) {
+        throw HttpException.badRequest({
+          message: "A user with this email already exists.",
+        });
+      }
+  
+      const hashedPassword = await this.hashPassword({ password });
+  
+      const user = await prisma.user.create({
+        data: {
+          ...createUserInput,
+          password: hashedPassword,
+        },
+      });
+  
+      const { accessToken, refreshToken } = await this.generateAuthenticationTokens({
+        accountId: user.id,
+      });
+  
+      return {
+        user,
+        accessToken,
+        refreshToken,
+      };
+    };
+
     /**
      * Generate a JWT access token for a given account id.
      */
@@ -86,11 +130,11 @@ class AuthService {
         accountId: string;
     }): Promise<{ accessToken: string; refreshToken: string }> => {
         // Get the user
-        const account = await prisma.account.findUnique({
+        const user = await prisma.user.findUnique({
             where: { id: accountId },
         });
 
-        if (!account) {
+        if (!user) {
             throw new Error("Account does not exist.");
         }
 
@@ -108,7 +152,7 @@ class AuthService {
         const accessToken = await this.signJwt({
             payload: {
                 sub: session.id,
-                role: account.role,
+                role: user.role,
             },
             options: {
                 expiresIn: `${authConfig.accessTokenExpirationMinutes}m`,

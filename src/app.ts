@@ -11,7 +11,6 @@ import { Logger } from "@/common/utils/logger";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
- import { initializeJwtStrategy } from "./modules/auth/strategies/jwt.strategy";
 import cookieParser from "cookie-parser";
 import * as Sentry from "@sentry/node";
 import { initializeZod } from "./common/utils/zod";
@@ -29,13 +28,7 @@ const bootstrap = async () => {
   // Set view engine to ejs
   app.set("view engine", "ejs");
 
-  // We parse the body of the request to be able to access it
-  // @example: app.post('/', (req) => req.body.prop)
   app.use(express.json());
-
-  // We parse the Content-Type `application/x-www-form-urlencoded`
-  // ex: key1=value1&key2=value2.
-  // to be able to access these forms's values in req.body
   app.use(express.urlencoded({ extended: true }));
 
   // Parse cookies
@@ -56,10 +49,6 @@ const bootstrap = async () => {
 
   // We trim the body of the incoming requests to remove any leading or trailing whitespace
   app.use(trimMiddleware);
-
-  // Passport strategies
-  await initializeJwtStrategy();
-
 
   // Zod
   initializeZod();

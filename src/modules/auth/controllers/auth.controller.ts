@@ -1,59 +1,69 @@
 import { NextFunction, Request, Response } from "express";
 import { prisma } from "@/common/database/prisma";
 import { HttpException } from "@/common/exceptions/http-exception";
-import { Customer } from "@/generated/prisma/client";
-import { Admin } from "@/generated/prisma/client";
 import { authService } from "@/common/services/auth.service";
 import { validateData } from "@/common/utils/validation";
 import {
   authRefreshTokenValidator,
+  authRegisterValidator,
   authSigninValidator,
 } from "../validators/auth.validators";
 import { authConfig } from "../auth.config";
 
 export class AuthController {
+  register = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { body } = await validateData(authRegisterValidator, {
+        body: req.body,
+      });
+
+      const { user, accessToken, refreshToken } = await authService.register({
+        createUserInput: body,
+      });
+
+      res.cookie("salinas_access_token", accessToken, {
+        secure: process.env.NODE_ENV === "production",
+        maxAge: authConfig.accessTokenExpirationMinutes * 60 * 1000, // Convert minutes to milliseconds
+      });
+
+      res.cookie("salinas_refresh_token", refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        maxAge: authConfig.refreshTokenExpirationMinutes * 60 * 1000, // Convert minutes to milliseconds
+      });
+
+      const { password, ...userWithoutPassword } = user;
+
+      return res.status(201).json({
+        user: userWithoutPassword,
+        accessToken,
+        refreshToken,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   signIn = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { body } = await validateData(authSigninValidator, {
         body: req.body,
       });
 
-      // Verify if user exists
-      let user: Admin | Customer | null = null;
-      if (body.role === "ADMIN") {
-        user = await prisma.admin.findFirst({
-          where: {
-            email: {
-              contains: body.email,
-              mode: "insensitive",
-            },
-          },
-        });
-      } else if (body.role === "CUSTOMER") {
-        user = await prisma.customer.findFirst({
-          where: {
-            email: {
-              contains: body.email,
-              mode: "insensitive",
-            },
-          },
-        });
-      }
+      // Verificar si el usuario existe
+      const user = await prisma.user.findUnique({
+        where: {
+          email: body.email,
+        },
+      });
 
-      if (!user) {
+      if (!user || !user.password) {
         throw HttpException.badRequest({
-          message: "Mot de passe ou e-mail incorrect.",
+          message: "Contraseña o correo incorrecto.",
         });
       }
 
-      if (!user.password) {
-        throw HttpException.badRequest({
-          message:
-            "You have previously signed up with another service like Google, please use the appropriate login method for this account.",
-        });
-      }
-
-      // Hash given password and compare it to the stored hash
+      // Comparamos la contraseña
       const validPassword = await authService.comparePassword({
         password: body.password,
         hashedPassword: user.password,
@@ -61,28 +71,31 @@ export class AuthController {
 
       if (!validPassword) {
         throw HttpException.badRequest({
-          message: "Mot de passe ou e-mail incorrect.",
+          message: "Contraseña o correo incorrecto.",
         });
       }
 
-      // Generate an access token
+      // Generamos el token
       const { accessToken, refreshToken } =
         await authService.generateAuthenticationTokens({
-          accountId: user.accountId,
+          accountId: user.id,
         });
 
-      res.cookie("lunisoft_access_token", accessToken, {
+      res.cookie("salinas_access_token", accessToken, {
         secure: process.env.NODE_ENV === "production",
-        maxAge: authConfig.accessTokenExpirationMinutes * 60 * 1000, // Convert minutes to milliseconds
+        maxAge: authConfig.accessTokenExpirationMinutes * 60 * 1000,
       });
 
-      res.cookie("lunisoft_refresh_token", refreshToken, {
+      res.cookie("salinas_refresh_token", refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
-        maxAge: authConfig.refreshTokenExpirationMinutes * 60 * 1000, // Convert minutes to milliseconds
+        maxAge: authConfig.refreshTokenExpirationMinutes * 60 * 1000,
       });
 
+      const { password, ...userWithoutPassword } = user;
+
       return res.json({
+        user: userWithoutPassword,
         accessToken,
         refreshToken,
       });
@@ -98,7 +111,7 @@ export class AuthController {
       });
 
       let previousRefreshToken =
-        body.refreshToken ?? req.cookies?.lunisoft_refresh_token;
+        body.refreshToken ?? req.cookies?.salinas_refresh_token;
 
       if (!previousRefreshToken) {
         throw HttpException.badRequest({
@@ -116,12 +129,12 @@ export class AuthController {
           });
         });
 
-      res.cookie("lunisoft_access_token", accessToken, {
+      res.cookie("salinas_access_token", accessToken, {
         secure: process.env.NODE_ENV === "production",
         maxAge: authConfig.accessTokenExpirationMinutes * 60 * 1000, // Convert minutes to milliseconds
       });
 
-      res.cookie("lunisoft_refresh_token", refreshToken, {
+      res.cookie("salinas_refresh_token", refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         maxAge: authConfig.refreshTokenExpirationMinutes * 60 * 1000, // Convert minutes to milliseconds
