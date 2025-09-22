@@ -1,0 +1,96 @@
+generator client {
+  provider      = "prisma-client"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-arm64-openssl-1.1.x"]
+  output        = "../src/generated/prisma/client"
+
+  // Optional Prisma Client Generator configuration
+  runtime                = "nodejs"
+  moduleFormat           = "cjs"
+  generatedFileExtension = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("APP_DATABASE_CONNECTION_URL")
+}
+
+// ------------------------------------------------------
+// Authentications
+// ------------------------------------------------------
+
+enum Role {
+  ADMIN
+  CUSTOMER
+}
+
+model Account {
+  id       String    @id @default(uuid())
+  role     Role
+  sessions Session[]
+
+  customer Customer?
+  admin    Admin?
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  expiresAt DateTime
+  account   Account  @relation(fields: [accountId], references: [id])
+  accountId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Customer {
+  id       String  @id @default(uuid())
+  email    String  @unique
+  password String?
+  phone    String?
+
+  account   Account @relation(fields: [accountId], references: [id])
+  accountId String  @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Admin {
+  id       String @id @default(uuid())
+  email    String @unique
+  password String
+
+  account   Account @relation(fields: [accountId], references: [id])
+  accountId String  @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ------------------------------------------------------
+// Common models
+// ------------------------------------------------------
+
+model Media {
+  id        String   @id @default(uuid())
+  fileName  String
+  key       String
+  mimeType  String
+  size      Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// data from https://www.insee.fr/fr/information/7766585 -> Pays et territoires étrangers
+model Country {
+  id            String  @id @default(uuid())
+  countryName   String
+  iso2Code      String  @unique // ISO 3166-1 alpha-2 code (FR, DE, ES, IT, etc..)
+  iso3Code      String  @unique // ISO 3166-1 alpha-3 code (FRA, DEU, ESP, ITA, etc..)
+  num3Code      String  @unique // ISO 3166-1 numeric-3 code (250, 276, 724, 380, etc..)
+  inseeCode     String?
+  continent     String?
+  continentName String?
+  currencyCode  String?
+  population    Int?    @default(0)
+}

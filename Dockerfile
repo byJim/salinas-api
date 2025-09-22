@@ -1,35 +1,42 @@
-# Base stage with pnpm setup
-FROM node:23.11.1-slim AS base
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
-WORKDIR /app
+# -- BUILDER
+FROM node:22.9.0-bullseye-slim AS builder
+WORKDIR /usr/src/app
 
-# Production dependencies stage
-FROM base AS prod-deps
-COPY package.json pnpm-lock.yaml ./
-# Install only production dependencies
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --prod --frozen-lockfile --ignore-scripts
-
-# Build stage - install all dependencies and build
-FROM base AS build
-COPY package.json pnpm-lock.yaml ./
-# Install all dependencies (including dev dependencies)
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile --ignore-scripts
+# Install dependencies
 COPY . .
-RUN pnpm run build
+RUN npm install
 
-# Final stage - combine production dependencies and build output
-FROM node:23.11.1-alpine AS runner
-WORKDIR /app
-COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/dist ./dist
+# Build project
+RUN npx prisma generate
+RUN npm run build
 
-# Use the node user from the image
-USER node
+# -- RUNNER
+FROM node:22.9.0-bullseye-slim AS base
+WORKDIR /usr/src/app
 
-# Expose port 8080
-EXPOSE 8080
+# Update apt and install security updates
+RUN apt update && \
+    apt upgrade -y && \
+    apt install -y ca-certificates && \
+    apt clean
 
-# Start the server
-CMD ["node", "dist/index.js"]
+# Install required packages
+RUN apt install -y wget xz-utils procps
+
+# Install ffmpeg using apt
+RUN apt install -y ffmpeg
+
+# Install production-only dependencies (this will ignore devDependencies)
+COPY ./package.json ./
+COPY ./package-lock.json ./
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+
+# Playwright's dependencies
+RUN npx playwright install chromium --with-deps
+
+# Copy project specific files
+COPY --from=builder /usr/src/app/dist ./dist
+COPY ./prisma ./prisma
+
+ENV NODE_ENV=production
+CMD npm run start
