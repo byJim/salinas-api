@@ -9,7 +9,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]),
   APP_JWT_PRIVATE_KEY: z.string(),
   APP_JWT_PUBLIC_KEY: z.string(),
-  APP_PORT: z.string()
+  APP_PORT: z.string(),
+  APP_DATABASE_CONNECTION_URL:z.string(),
 });
 
 export const env = envSchema.parse(process.env);
