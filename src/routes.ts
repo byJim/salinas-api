@@ -1,8 +1,12 @@
 import { Router } from "express";
 import { authRoutes } from "@/modules/auth/routes/auth.routes";
+import { userRoutes } from "@/modules/user/routes/user.routes"
 
 export const apiRoutes = Router();
 
-// -- Auth
+// Autenticacion
  apiRoutes.use(authRoutes);
+
+// User
+ apiRoutes.use(userRoutes);
 

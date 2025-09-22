@@ -1,66 +1,92 @@
 import { NextFunction, Request, Response } from "express";
-import passport from "passport";
 import { HttpException } from "@/common/exceptions/http-exception";
-import { CustomAccount } from "@/common/types/request";
+import { authService } from "@/common/services/auth.service";
+import { prisma } from "@/common/database/prisma";
+import { User } from "@/generated/prisma/client";
+
+// By extending the Express Request interface, we can add our own
+// context property for type-safe access in controllers.
+declare global {
+  namespace Express {
+    interface Request {
+      context?: {
+        user: Omit<User, "password">;
+      };
+    }
+  }
+}
 
 /**
-  Block everything if the user is not authenticated and the route is not public
-  get the user from the token and add it to the request.
-  Checks for JWT token in Authorization header first, then falls back to URL query params (?token=)
-  @example app.get('/', (req) => req.context?.account)
-*/
+ * @summary Protects routes by verifying a JWT access token.
+ * @description Extracts a JWT from the 'salinas_access_token' cookie or the
+ * Authorization header, validates it against the database, and attaches the
+ * authenticated user to the request context (`req.context.user`).
+ */
 export const sessionsGuard = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
-  // Extract Authorization header
-  const authHeader = req.headers.authorization;
+  try {
+    let token: string | undefined;
 
-  // If the authorization header is not present, try to get the token from the url query params or cookies
-  if (!authHeader) {
-    // Try to get the token from the url query params
-    const queryToken = req.query?.["token"];
-    if (queryToken) {
-      req.headers.authorization = `Bearer ${queryToken}`;
+    // 1. Extract token from cookie or Authorization header.
+    if (req.cookies?.salinas_access_token) {
+      token = req.cookies.salinas_access_token;
+    } else if (req.headers.authorization?.startsWith("Bearer ")) {
+      token = req.headers.authorization.split(" ")[1];
     }
 
-    // Try to get the token from the cookies
-    if (!queryToken) {
-      const cookieToken = req.cookies?.["lunisoft_access_token"];
-
-      if (cookieToken) {
-        req.headers.authorization = `Bearer ${cookieToken}`;
-      }
+    if (!token) {
+      return next(
+        HttpException.unauthorized({
+          message: "Authentication required. No access token provided.",
+        })
+      );
     }
+
+    // 2. Verify the JWT and get its payload.
+    const payload = await authService.getJwtPayload(token).catch(() => {
+      // This catches errors from jwt.verify (e.g., invalid signature, expired token)
+      throw HttpException.unauthorized({
+        message: "Invalid or expired access token.",
+      });
+    });
+
+    // 3. Find the corresponding session in the database.
+    const session = await prisma.session.findUnique({
+      where: {
+        id: payload.sub,
+        // Also ensure the session itself hasn't expired.
+        // This is important for enabling manual session revocation.
+        expiresAt: {
+          gt: new Date(),
+        },
+      },
+      include: {
+        account: true, // Fetch the associated user.
+      },
+    });
+
+    // If no valid session is found, the token is effectively invalid.
+    if (!session || !session.account) {
+      return next(
+        HttpException.unauthorized({
+          message: "Session has expired or is invalid. Please sign in again.",
+        })
+      );
+    }
+
+    // 4. Attach the authenticated user to the request context.
+    // We remove the password hash for security.
+    const { password, ...userWithoutPassword } = session.account;
+    req.context = {
+      user: userWithoutPassword,
+    };
+
+    // 5. Proceed to the next middleware or route handler.
+    return next();
+  } catch (error) {
+    return next(error);
   }
-
-  // Call passport authentication mechanism
-  await passport.authenticate(
-    "jwt",
-    { session: false },
-    (err: Error, user: CustomAccount) => {
-      // Handle middleware error
-      if (err) {
-        return next(err);
-      }
-
-      // Handle authentication failure
-      // We provide 401 status code so the frontend can redirect to the login page
-      if (!user) {
-        return next(
-          HttpException.unauthorized({
-            message:
-              "Authentication required. Please provide a valid access token.",
-          })
-        );
-      }
-
-      // Handle authentication success
-      req.context = {
-        account: user,
-      };
-      next();
-    }
-  )(req, res, next);
 };
